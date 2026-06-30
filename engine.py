@@ -17,10 +17,27 @@ DEFAULT_MAP = {
     "Munindra": "MUNINDRA",
     "Mahendra Dhoni": "MAHENDRA",
     "anil": "ANIL",
-    "+91 72042 06046": "VINOD",
     "Darshan": "DARSHAN",
+    # Note: a BDM who posts from an UNSAVED phone number is mapped via secrets/env,
+    # not hard-coded here (keeps personal numbers out of the repo). See load_mapping().
 }
 DEFAULT_ORDER = ["ROHITH", "MUNINDRA", "MAHENDRA", "ANIL", "VINOD", "DARSHAN"]
+
+
+def load_mapping(extra=None):
+    """Return the sender->BDM map, merging any extra pairs (e.g. unsaved phone numbers)
+    supplied via Streamlit secrets or the BDM_SENDER_MAP env var (JSON). Keeps PII out of git."""
+    import os, json
+    mapping = dict(DEFAULT_MAP)
+    if extra:
+        mapping.update(extra)
+    env = os.environ.get("BDM_SENDER_MAP")
+    if env:
+        try:
+            mapping.update(json.loads(env))
+        except Exception:
+            pass
+    return mapping
 
 LEFT_RE = re.compile(r"\bleft\b", re.I)
 OFFICE_RE = re.compile(r"\boffice\b", re.I)
@@ -108,7 +125,7 @@ def build_events(msgs, mapping):
 
 def parse_events(file_bytes_or_text, mapping=None):
     """Parse an export once -> (events, unmapped_senders, all_dates). Cheap; cache this."""
-    mapping = mapping or DEFAULT_MAP
+    mapping = mapping or load_mapping()
     text = read_export(file_bytes_or_text)
     ev, unmapped = build_events(parse(text), mapping)
     all_dates = sorted({d for bdm in ev for d in ev[bdm]})
@@ -408,7 +425,7 @@ def build_workbook(ev, order):
 
 def process(file_bytes_or_text, mapping=None, order=None):
     """High-level: export -> (Workbook, events, metrics, unmapped_senders)."""
-    mapping = mapping or DEFAULT_MAP
+    mapping = mapping or load_mapping()
     order = order or DEFAULT_ORDER
     text = read_export(file_bytes_or_text)
     msgs = parse(text)

@@ -9,7 +9,17 @@ from datetime import date, timedelta
 import streamlit as st
 import pandas as pd
 from engine import (parse_events, filter_events, build_workbook, reconstruct,
-                    store_count, store_coverage, anomalies, hm, _tmin, DEFAULT_ORDER)
+                    store_count, store_coverage, anomalies, hm, _tmin,
+                    DEFAULT_ORDER, load_mapping)
+
+# Sender->BDM map. Unsaved phone numbers (PII) are supplied via Streamlit Secrets:
+#   [sender_map]
+#   "+91 72042 06046" = "VINOD"
+try:
+    _extra = dict(st.secrets.get("sender_map", {}))
+except Exception:
+    _extra = {}
+MAPPING = load_mapping(_extra)
 
 st.set_page_config(page_title="ACPL BDM Attendance", page_icon="📍", layout="wide")
 st.markdown("""<style>.block-container{padding-top:1.4rem;} h1{color:#1F3864;}
@@ -32,11 +42,11 @@ if not up:
     st.info("⬆️ Upload the exported chat to begin."); st.stop()
 
 @st.cache_data(show_spinner="Reading export…")
-def _load(data: bytes):
-    return parse_events(data)
+def _load(data: bytes, map_items: tuple):
+    return parse_events(data, dict(map_items))
 
 try:
-    ev_all, unmapped, all_dates = _load(up.getvalue())
+    ev_all, unmapped, all_dates = _load(up.getvalue(), tuple(sorted(MAPPING.items())))
 except Exception as e:
     st.error(f"Could not read the export: {e}"); st.stop()
 if not all_dates:
