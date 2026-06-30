@@ -50,7 +50,7 @@ def _load(data: bytes, map_items: tuple):
     return parse_events(data, dict(map_items))
 
 try:
-    ev_all, unmapped, all_dates = _load(up.getvalue(), tuple(sorted(MAPPING.items())))
+    ev_all, full_order, other_posters, all_dates = _load(up.getvalue(), tuple(sorted(MAPPING.items())))
 except Exception as e:
     st.error(f"Could not read the export: {e}"); st.stop()
 if not all_dates:
@@ -89,15 +89,19 @@ ev = filter_events(ev_all, s.isoformat(), e.isoformat())
 sel_dates = sorted({d for b in ev for d in ev[b]})
 if not sel_dates:
     st.warning("No visits in that period. Pick another date/range."); st.stop()
-wb, (a_dates, latest, per) = build_workbook(ev, DEFAULT_ORDER)
+# only show BDMs/senders who actually have data in the chosen period
+order = [b for b in full_order if ev.get(b)]
+wb, (a_dates, latest, per) = build_workbook(ev, order)
 dtl = datetime.datetime.strptime(latest, "%Y-%m-%d")
+unsaved_sheets = [b for b in order if b not in DEFAULT_ORDER]
 
 # ---------------- DOWNLOAD ----------------
 buf = io.BytesIO(); wb.save(buf); buf.seek(0)
 fname = (f"APPLE BDM VISIT - {dtl.strftime('%d-%m-%Y')}.xlsx" if s == e
          else f"APPLE BDM VISIT - {s.strftime('%d-%m')} to {e.strftime('%d-%m-%Y')}.xlsx")
 d1, d2 = st.columns([3, 1])
-d1.success(f"✅ Period **{s.strftime('%d-%b')} → {e.strftime('%d-%b-%Y')}**  ·  {len(sel_dates)} day(s)  ·  {len(DEFAULT_ORDER)} BDMs")
+_extra_note = f"  ·  ⚠️ {len(unsaved_sheets)} unsaved-number sheet(s): {', '.join(unsaved_sheets)}" if unsaved_sheets else ""
+d1.success(f"✅ Period **{s.strftime('%d-%b')} → {e.strftime('%d-%b-%Y')}**  ·  {len(sel_dates)} day(s)  ·  {len(order)} sheets{_extra_note}")
 d2.download_button("⬇️ Download Excel", buf, file_name=fname,
                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                    use_container_width=True)
@@ -105,7 +109,7 @@ d2.download_button("⬇️ Download Excel", buf, file_name=fname,
 # ---------------- TODAY / LATEST ----------------
 st.subheader(f"▶ Latest day in selection — {dtl.strftime('%d-%b-%Y (%A)')}")
 rows = []
-for b in DEFAULT_ORDER:
+for b in order:
     v = reconstruct(ev.get(b, {}).get(latest, [])); reals = [x for x in v if not x["office"]]
     if reals:
         ins = [_tmin(x["tin"]) for x in reals]; outs = [_tmin(x["tout"]) for x in reals if x["tout"]]
@@ -124,7 +128,7 @@ st.dataframe(tdf, hide_index=True, use_container_width=True)
 # ---------------- PERIOD SUMMARY ----------------
 st.subheader("▶ Period summary (selected range)")
 prow = [[b, per[b]["days_worked"], per[b]["leave"], per[b]["total"], per[b]["avg_stores"],
-         hm(per[b]["field"]), hm(per[b]["avg_store_min"]), hm(per[b]["avg_login"])] for b in DEFAULT_ORDER]
+         hm(per[b]["field"]), hm(per[b]["avg_store_min"]), hm(per[b]["avg_login"])] for b in order]
 pdf = pd.DataFrame(prow, columns=["BDM", "Days Worked", "Days Leave", "Total Stores",
                                   "Avg Stores/Day", "Total Field Time", "Avg Time/Store", "Avg First-In"])
 st.dataframe(pdf, hide_index=True, use_container_width=True)
@@ -134,15 +138,15 @@ st.subheader("▶ Daily store visits")
 mat = []
 for d in sel_dates[-31:]:
     dd = datetime.datetime.strptime(d, "%Y-%m-%d")
-    r = [dd.strftime("%d-%b %a")] + [per[b]["per_day"].get(d, "") for b in DEFAULT_ORDER]
+    r = [dd.strftime("%d-%b %a")] + [per[b]["per_day"].get(d, "") for b in order]
     r.append(sum(x for x in r[1:] if isinstance(x, int)))
     mat.append(r)
-st.dataframe(pd.DataFrame(mat, columns=["Date"] + DEFAULT_ORDER + ["Team"]),
+st.dataframe(pd.DataFrame(mat, columns=["Date"] + order + ["Team"]),
              hide_index=True, use_container_width=True)
 
 # ---------------- STORE COVERAGE ----------------
 st.subheader("▶ Store coverage")
-cov = store_coverage(ev, DEFAULT_ORDER)
+cov = store_coverage(ev, order)
 if cov:
     cc1, cc2, cc3 = st.columns(3)
     cc1.metric("Unique stores", len(cov))
@@ -158,7 +162,7 @@ if cov:
 
 # ---------------- DATA QUALITY ----------------
 st.subheader("▶ Data quality & anomalies")
-issues, quality = anomalies(ev, DEFAULT_ORDER)
+issues, quality = anomalies(ev, order)
 qdf = pd.DataFrame([[q["bdm"], q["visits"], q["missing_exit"], f"{q['pct']}%"] for q in quality],
                    columns=["BDM", "Visits", "Missing 'left' photo", "Missing %"])
 qc1, qc2 = st.columns([1, 1])
@@ -172,7 +176,15 @@ if issues:
 else:
     qc2.success("No anomalies in this period. 👍")
 
-if unmapped:
-    with st.expander("ℹ️ Other posters in the group (not tracked)"):
-        st.dataframe(pd.DataFrame(sorted(unmapped.items(), key=lambda x: -x[1]),
+if unsaved_sheets:
+    st.info("⚠️ **Unsaved numbers detected.** These posted field visits from a phone number that isn't "
+            "saved as a contact, so they appear as their own sheet labelled by the number: **"
+            + ", ".join(unsaved_sheets) + "**. Their data is fully included — save the number as a contact "
+            "(or map it in the app secrets) to show a proper name instead.")
+
+if other_posters:
+    with st.expander("ℹ️ Other small/non-field posters in the group (not given a sheet)"):
+        st.dataframe(pd.DataFrame(sorted(other_posters.items(), key=lambda x: -x[1]),
                                   columns=["Sender", "Photos"]), hide_index=True, use_container_width=True)
+        st.caption("These are below the field-activity threshold (e.g. HR/managers/one-offs). "
+                   "If one is actually a BDM, save their number or map it in secrets.")

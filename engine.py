@@ -91,45 +91,75 @@ def _tparse(t):    h, m = t.split(":"); return datetime.time(int(h), int(m))
 def _tmin(t):      h, m = t.split(":"); return int(h) * 60 + int(m)
 
 
+_BADSHEET = re.compile(r'[:\\/?*\[\]]')
+
+def sanitize_sheet(name):
+    """Make a safe, unique-ish Excel sheet title from a sender id (e.g. a phone number)."""
+    s = _BADSHEET.sub("", str(name)).strip()
+    return (s[:31] or "UNKNOWN")
+
+
 def build_events(msgs, mapping):
-    """Group photo captions per BDM per date, deduping exact repeats (e.g. double-sent photos)."""
+    """Group photo captions per date for BOTH mapped BDMs and unmapped senders.
+    Returns (ev_mapped, ev_unmapped) — nothing is dropped; unsaved numbers are kept separately."""
     ev = defaultdict(lambda: defaultdict(list))
+    evu = defaultdict(lambda: defaultdict(list))
     last = {}
-    unmapped = defaultdict(int)
     for d, t, s, b in msgs:
         if s is None:
             continue
         c = _cap(b)
         if c is None:
             continue
-        if s not in mapping:
-            unmapped[s] += 1
-            continue
-        bdm = mapping[s]
-        if last.get((s, d)) == (t, c):
+        if last.get((s, d)) == (t, c):          # drop exact double-sent photo
             continue
         last[(s, d)] = (t, c)
-        ev[bdm][d].append((t, c))
-    # sort + dedupe per bdm/day
-    for bdm in ev:
-        for d in ev[bdm]:
-            seen, out = set(), []
-            for t, c in sorted(ev[bdm][d]):
-                if (t, c) in seen:
-                    continue
-                seen.add((t, c)); out.append((t, c))
-            ev[bdm][d] = out
-    # return as plain (picklable) dicts
-    return {b: dict(days) for b, days in ev.items()}, dict(unmapped)
+        (ev[mapping[s]] if s in mapping else evu[s])[d].append((t, c))
+
+    def finalize(e):
+        for k in e:
+            for d in e[k]:
+                seen, out = set(), []
+                for t, c in sorted(e[k][d]):
+                    if (t, c) in seen:
+                        continue
+                    seen.add((t, c)); out.append((t, c))
+                e[k][d] = out
+        return {k: dict(v) for k, v in e.items()}
+    return finalize(ev), finalize(evu)
 
 
-def parse_events(file_bytes_or_text, mapping=None):
-    """Parse an export once -> (events, unmapped_senders, all_dates). Cheap; cache this."""
+def parse_events(file_bytes_or_text, mapping=None, min_days_for_sheet=4):
+    """Parse an export once -> (events, order, other_posters, all_dates). Cheap; cache this.
+
+    A sender whose number isn't saved is STILL given its own sheet, labelled by the
+    phone number, as long as it has real field activity (store visits on >= min_days_for_sheet
+    days). Tiny / non-field posters (HR, one-offs) stay in 'other_posters' only."""
     mapping = mapping or load_mapping()
     text = read_export(file_bytes_or_text)
-    ev, unmapped = build_events(parse(text), mapping)
-    all_dates = sorted({d for bdm in ev for d in ev[bdm]})
-    return ev, unmapped, all_dates
+    ev, evu = build_events(parse(text), mapping)
+
+    extra = {}            # sheet title -> events  (unsaved numbers that qualify)
+    promoted = set()
+    used = set(ev.keys())
+    is_phone = re.compile(r'^\+?[\d][\d ]{6,}$')   # an unsaved phone-number sender
+    for s in sorted(evu, key=lambda x: -sum(len(v) for v in evu[x].values())):
+        days = evu[s]
+        store_days = sum(1 for d, lst in days.items()
+                         if any(c and not _is_left(c) and not _is_office(c) for _, c in lst))
+        # Only give a sheet to an UNSAVED NUMBER with real field activity.
+        # Named non-BDM contacts (managers/HR) stay in 'other_posters'.
+        if is_phone.match(s.strip()) and store_days >= min_days_for_sheet:
+            title = sanitize_sheet(s); base, i = title, 2
+            while title in used:
+                title = f"{base[:28]} {i}"; i += 1
+            used.add(title); extra[title] = days; promoted.add(s)
+
+    merged = dict(ev); merged.update(extra)
+    order = [b for b in DEFAULT_ORDER if b in merged] + list(extra.keys())
+    other_posters = {s: sum(len(v) for v in evu[s].values()) for s in evu if s not in promoted}
+    all_dates = sorted({d for b in merged for d in merged[b]})
+    return merged, order, other_posters, all_dates
 
 
 def filter_events(ev, start=None, end=None):
@@ -424,14 +454,12 @@ def build_workbook(ev, order):
 
 
 def process(file_bytes_or_text, mapping=None, order=None):
-    """High-level: export -> (Workbook, events, metrics, unmapped_senders)."""
+    """High-level: export -> (Workbook, events, metrics, other_posters)."""
     mapping = mapping or load_mapping()
-    order = order or DEFAULT_ORDER
-    text = read_export(file_bytes_or_text)
-    msgs = parse(text)
-    ev, unmapped = build_events(msgs, mapping)
+    ev, auto_order, other_posters, all_dates = parse_events(file_bytes_or_text, mapping)
+    order = order or auto_order
     wb, metrics = build_workbook(ev, order)
-    return wb, ev, metrics, unmapped
+    return wb, ev, metrics, other_posters
 
 
 if __name__ == "__main__":
@@ -439,9 +467,9 @@ if __name__ == "__main__":
     path = sys.argv[1] if len(sys.argv) > 1 else \
         r"C:\Users\AHCPL\Desktop\afreen work\WhatsApp Chat with ACPL BDM's ATTENDANCE.zip"
     with open(path, "rb") as f:
-        wb, ev, (all_dates, latest, per), unmapped = process(f.read())
+        wb, ev, (all_dates, latest, per), other = process(f.read())
     out = r"C:\Users\AHCPL\Desktop\afreen work\APPLE BDM VISIT - GENERATED.xlsx"
     wb.save(out)
     print("Saved", out)
-    print("Dates:", all_dates[0], "->", all_dates[-1], "| BDMs:", list(per.keys()))
-    print("Unmapped senders (ignored):", {k: v for k, v in sorted(unmapped.items(), key=lambda x: -x[1])})
+    print("Dates:", all_dates[0], "->", all_dates[-1], "| Sheets:", list(per.keys()))
+    print("Other small posters (kept in app list, not sheets):", other)
