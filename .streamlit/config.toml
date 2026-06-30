@@ -1,12 +1,13 @@
 # Clean, viewer-friendly UI for the shared app.
 [client]
-# Hides the developer toolbar (Deploy / GitHub / Edit / Fork badges) for everyone.
-toolbarMode = "minimal"
+# "viewer" hides the DEVELOPER toolbar (Deploy / GitHub / Edit / Fork / Source)
+# but KEEPS the ⋮ menu, including the Light / Dark / System theme switcher.
+toolbarMode = "viewer"
 showErrorDetails = false
 
 [browser]
 gatherUsageStats = false
 
 [theme]
+# Brand accent only — does NOT lock the theme; users can still switch Light/Dark/System.
 primaryColor = "#1F3864"
-base = "light"

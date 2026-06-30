@@ -23,12 +23,11 @@ MAPPING = load_mapping(_extra)
 
 st.set_page_config(page_title="ACPL BDM Attendance", page_icon="📍", layout="wide")
 st.markdown("""<style>
-.block-container{padding-top:1.4rem;} h1{color:#1F3864;}
-[data-testid="stMetricValue"]{color:#1F3864;}
-#MainMenu{visibility:hidden;}      /* hide the ⋮ menu */
-footer{visibility:hidden;}          /* hide 'Made with Streamlit' */
-[data-testid="stToolbar"]{display:none;}  /* hide dev toolbar for viewers */
+.block-container{padding-top:1.4rem;}
+footer{visibility:hidden;}   /* hide 'Made with Streamlit' only */
 </style>""", unsafe_allow_html=True)
+# NOTE: text colours are NOT hard-coded, so headings stay readable in BOTH
+# Light and Dark themes. The ⋮ menu (theme switcher) is kept via toolbarMode="viewer".
 
 st.title("📍 ACPL — BDM Field Visit Attendance")
 st.caption("Upload the WhatsApp group export (**Export chat → Attach Media**), choose a period, "
