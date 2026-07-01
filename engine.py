@@ -18,8 +18,8 @@ DEFAULT_MAP = {
     "Mahendra Dhoni": "MAHENDRA",
     "anil": "ANIL",
     "Darshan": "DARSHAN",
-    # Note: a BDM who posts from an UNSAVED phone number is mapped via secrets/env,
-    # not hard-coded here (keeps personal numbers out of the repo). See load_mapping().
+    "+91 72042 06046": "VINOD",   # Vinod posts from this unsaved number
+    # Extra unsaved numbers can also be mapped via secrets/env — see load_mapping().
 }
 DEFAULT_ORDER = ["ROHITH", "MUNINDRA", "MAHENDRA", "ANIL", "VINOD", "DARSHAN"]
 
